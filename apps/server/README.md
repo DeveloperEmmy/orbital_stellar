@@ -29,7 +29,7 @@ The server listens on `PORT` (default `3000`). Point your client at `http://loca
 ## Register a webhook
 
 ```bash
-curl -X POST http://localhost:3000/webhooks/register \
+curl -X POST http://localhost:3000/v1/webhooks/register \
   -H "Authorization: Bearer dev-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -42,7 +42,7 @@ curl -X POST http://localhost:3000/webhooks/register \
 ## Subscribe over SSE
 
 ```bash
-curl -N "http://localhost:3000/events/GABC...?token=dev-key"
+curl -N "http://localhost:3000/v1/events/GABC...?token=dev-key"
 ```
 
 Or from the browser, via `@orbital/pulse-notify`:
