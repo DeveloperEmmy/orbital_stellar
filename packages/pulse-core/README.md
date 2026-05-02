@@ -56,6 +56,8 @@ Open or close the SSE stream. Idempotent — calling `start()` twice logs a warn
 
 Returns a `Watcher` for the given Stellar public key. Watchers are deduplicated — calling `subscribe` twice with the same address returns the same instance.
 
+Once a watcher has been stopped, it will not accept new listeners. Calling `watcher.on(...)` after `watcher.stop()` logs a warning and leaves the listener unregistered. If you construct a watcher directly with `{ strictStoppedListeners: true }`, the same call throws instead.
+
 ### `engine.unsubscribe(address)`
 
 Stops and removes the watcher for the given address.
@@ -70,6 +72,7 @@ Stops and removes the watcher for the given address.
 | `*` | `NormalizedEvent` | Any event on this address |
 | `engine.reconnecting` | `WatcherNotification` | The engine is retrying its upstream connection |
 | `engine.reconnected` | `WatcherNotification` | Reconnect succeeded |
+| `engine.rate_limited` | `WatcherNotification` | The engine was rate limited and will retry after the delay |
 
 ### `NormalizedEvent` shape
 

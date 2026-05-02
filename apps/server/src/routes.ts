@@ -34,10 +34,7 @@ function validateWebhookUrl(raw: string): string | null {
 
 // --- Routes ---
 
-export function createRoutes(
-  registry: WebhookRegistry,
-  engine: EventEngine,
-): Router {
+export function createRoutes(registry: WebhookRegistry, engine: EventEngine, activeSSEConnections: Set<Response>): Router {
   const router = Router();
 
   // Apply auth to every route in this router
@@ -48,37 +45,18 @@ export function createRoutes(
     const { address, url, secret } = req.body as Record<string, unknown>;
 
     if (!address || !url || !secret) {
-      sendProblem(
-        res,
-        400,
-        "Missing Required Fields",
-        "address, url and secret are required",
-      );
+      sendProblem(res, 400, "Missing Required Fields", "address, url and secret are required");
       return;
     }
 
-    if (
-      typeof address !== "string" ||
-      typeof url !== "string" ||
-      typeof secret !== "string"
-    ) {
-      sendProblem(
-        res,
-        400,
-        "Invalid Field Types",
-        "address, url and secret must be strings",
-      );
+    if (typeof address !== "string" || typeof url !== "string" || typeof secret !== "string") {
+      sendProblem(res, 400, "Invalid Field Types", "address, url and secret must be strings");
       return;
     }
 
     // Validate Stellar public key
     if (!StrKey.isValidEd25519PublicKey(address)) {
-      sendProblem(
-        res,
-        400,
-        "Invalid Stellar Key",
-        "address must be a valid Stellar public key",
-      );
+      sendProblem(res, 400, "Invalid Stellar Key", "address must be a valid Stellar public key");
       return;
     }
 
@@ -90,12 +68,7 @@ export function createRoutes(
     }
 
     if (registry.has(address)) {
-      sendProblem(
-        res,
-        409,
-        "Address Already Registered",
-        "This address already has a registered webhook",
-      );
+      sendProblem(res, 409, "Address Already Registered", "This address already has a registered webhook");
       return;
     }
 
@@ -104,25 +77,17 @@ export function createRoutes(
   });
 
   // Unregister a webhook
-  router.delete(
-    "/webhooks/:address",
-    (req: Request<{ address: string }>, res: Response) => {
-      const { address } = req.params;
-      const removed = registry.unregister(address);
+  router.delete("/webhooks/:address", (req: Request<{ address: string }>, res: Response) => {
+    const { address } = req.params;
+    const removed = registry.unregister(address);
 
-      if (!removed) {
-        sendProblem(
-          res,
-          404,
-          "Not Found",
-          `Address ${address} is not registered`,
-        );
-        return;
-      }
+    if (!removed) {
+      sendProblem(res, 404, "Not Found", `Address ${address} is not registered`);
+      return;
+    }
 
-      res.status(200).json({ message: `Unregistered ${address}` });
-    },
-  );
+    res.status(200).json({ message: `Unregistered ${address}` });
+  });
 
   // List all registrations — secrets are never included
   router.get("/webhooks", (_req: Request, res: Response) => {
@@ -130,59 +95,58 @@ export function createRoutes(
   });
 
   // Get a single registration
-  router.get(
-    "/webhooks/:address",
-    (req: Request<{ address: string }>, res: Response) => {
-      const { address } = req.params;
-      if (!registry.has(address)) {
-        sendProblem(
-          res,
-          404,
-          "Not Found",
-          `Address ${address} is not registered`,
-        );
-        return;
-      }
-      // list() already strips secrets; find the one entry
-      const entry = registry.list().find((r) => r.address === address);
-      res.status(200).json(entry);
-    },
-  );
+  router.get("/webhooks/:address", (req: Request<{ address: string }>, res: Response) => {
+    const { address } = req.params;
+    if (!registry.has(address)) {
+      sendProblem(res, 404, "Not Found", `Address ${address} is not registered`);
+      return;
+    }
+    // list() already strips secrets; find the one entry
+    const entry = registry.list().find((r) => r.address === address);
+    res.status(200).json(entry);
+  });
 
   // SSE endpoint — browser connects here to receive live events
-  router.get(
-    "/events/:address",
-    (req: Request<{ address: string }>, res: Response) => {
-      const { address } = req.params;
+  router.get("/events/:address", (req: Request<{ address: string }>, res: Response) => {
+    const { address } = req.params;
 
-      res.setHeader("Content-Type", "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection", "keep-alive");
-      res.flushHeaders();
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
 
-      const watcher = engine.subscribe(address);
+    activeSSEConnections.add(res);
 
-      const handler = (event: unknown) => {
+    const watcher = engine.subscribe(address);
+
+    const handler = (event: unknown) => {
+      try {
         res.write(`data: ${JSON.stringify(event)}\n\n`);
-      };
+      } catch (err) {
+        req.log.error({ address, err }, "Error writing SSE event to client");
+      }
+    };
 
-      watcher.on("*", handler);
+    watcher.on("*", handler);
 
-      const heartbeat = setInterval(() => {
+    const heartbeat = setInterval(() => {
+      try {
         res.write(`: heartbeat\n\n`);
-      }, 30000);
+      } catch (err) {
+        req.log.error({ address, err }, "Error sending SSE heartbeat");
+      }
+    }, 30000);
 
-      req.on("close", () => {
-        clearInterval(heartbeat);
-        watcher.removeListener("*", handler);
-        // Fully remove the watcher from the engine so no dead watchers remain
-        engine.unsubscribe(address);
-        console.log(`[sse] Client disconnected from ${address}`);
-      });
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      watcher.removeListener("*", handler);
+      engine.unsubscribe(address);
+      activeSSEConnections.delete(res);
+      req.log.info({ address }, "SSE client disconnected");
+    });
 
-      console.log(`[sse] Client connected to ${address}`);
-    },
-  );
+    req.log.info({ address }, "SSE client connected");
+  });
 
   return router;
 }

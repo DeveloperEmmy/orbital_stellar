@@ -12,6 +12,8 @@ export type PaymentEventType =
   | "payment.self";
 /** Event type for account options changes. */
 export type AccountOptionsEventType = "account.options_changed";
+/** Event type for account creation. */
+export type AccountEventType = "account.created";
 /** Event types for trustline lifecycle events (added, removed, or limit updated). */
 export type TrustlineEventType =
   | "trustline.added"
@@ -22,7 +24,12 @@ export type AccountMergeEventType = "account.merged";
 /** Notification types emitted by the EventEngine during reconnection. */
 export type WatcherNotificationType =
   | "engine.reconnecting"
-  | "engine.reconnected";
+  | "engine.reconnected"
+  | "engine.rate_limited";
+
+export type OfferEventType = "offer.created" | "offer.updated" | "offer.deleted";
+export type BumpSequenceEventType = "account.bump_sequence";
+export type DataEventType = "data.set" | "data.cleared";
 
 /**
  * Represents a signer in Stellar account options.
@@ -93,6 +100,53 @@ export type AccountOptionsEvent = {
   raw: unknown;
 };
 
+export type OfferEvent = {
+  type: OfferEventType;
+  offer_id: string;
+  source: string;
+  buying_asset: string;
+  selling_asset: string;
+  amount: string;
+  price: string;
+  timestamp: string;
+  raw: unknown;
+};
+
+export type BumpSequenceEvent = {
+  type: BumpSequenceEventType;
+  source: string;
+  bump_to: string;
+  timestamp: string;
+  raw: unknown;
+};
+
+export type DataEvent = {
+  type: DataEventType;
+  source: string;
+  name: string;
+  value: string | null;
+  timestamp: string;
+  raw: unknown;
+};
+
+/**
+ * A normalized account creation event from the Stellar network.
+ */
+export type AccountCreatedEvent = {
+  /** The type of account creation event. */
+  type: AccountEventType;
+  /** The Stellar account that funded the new account. */
+  funder: string;
+  /** The newly created Stellar account address. */
+  account: string;
+  /** The starting balance transferred to the new account. */
+  starting_balance: string;
+  /** ISO 8601 timestamp of the account creation. */
+  timestamp: string;
+  /** The original raw record from the Horizon API. */
+  raw: unknown;
+};
+
 /**
  * A normalized trustline lifecycle event from the Stellar network.
  */
@@ -133,8 +187,12 @@ export type AccountMergeEvent = {
 export type NormalizedEvent =
   | PaymentEvent
   | AccountOptionsEvent
+  | AccountCreatedEvent
   | TrustlineEvent
-  | AccountMergeEvent;
+  | AccountMergeEvent
+  | OfferEvent
+  | BumpSequenceEvent
+  | DataEvent;
 
 /**
  * A notification emitted by the EventEngine during reconnection attempts.
@@ -151,8 +209,8 @@ export type WatcherNotification = {
   attempt: number;
   /** The delay in milliseconds before the next reconnection attempt (for "engine.reconnecting" events). */
   delayMs?: number;
-  /** ISO 8601 timestamp of the notification. */
-  timestamp: string;
+  /** ISO 8601 timestamp of when this notification was emitted. */
+  emittedAt: string;
 };
 
 /**
@@ -198,3 +256,17 @@ export class UnknownNetworkError extends Error {
     this.name = "UnknownNetworkError";
   }
 }
+
+export type EngineStatus = {
+  running: boolean;
+  watcherCount: number;
+  lastEventAt: string | null;
+  reconnectAttempt: number;
+};
+
+export type SubscribeOptions = {
+  /** Optional predicate applied before each event is emitted to this watcher.
+   *  Return `false` to suppress delivery. If the predicate throws, the event
+   *  is suppressed and a warning is logged — the engine continues running. */
+  filter?: (event: NormalizedEvent) => boolean;
+};
